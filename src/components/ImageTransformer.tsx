@@ -1,4 +1,5 @@
 import React, { useCallback, useState } from "react";
+import JSZip from "jszip";
 
 type ProcessedImage = {
   id: string;
@@ -87,6 +88,7 @@ const ImageTransformer: React.FC = () => {
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [images, setImages] = useState<ProcessedImage[]>([]);
+  const [zipping, setZipping] = useState(false);
 
   const handleFiles = useCallback(async (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -134,10 +136,43 @@ const ImageTransformer: React.FC = () => {
     document.body.removeChild(a);
   };
 
-  const downloadAll = () => {
-    images.forEach((img, index) => {
-      setTimeout(() => downloadImage(img), index * 200);
-    });
+  const downloadAll = async () => {
+    if (images.length === 0 || zipping) return;
+    try {
+      setZipping(true);
+      const zip = new JSZip();
+      const folder = zip.folder("vintedhash-images");
+
+      if (!folder) {
+        throw new Error("Impossibile creare archivio ZIP");
+      }
+
+      await Promise.all(
+        images.map(async (img) => {
+          const response = await fetch(img.url);
+          const blob = await response.blob();
+          const arrayBuffer = await blob.arrayBuffer();
+          folder.file(img.name, arrayBuffer);
+        })
+      );
+
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "vintedhash-immagini.zip";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(
+        (e as Error).message ||
+          "Errore nella creazione dello ZIP. Riprova tra poco."
+      );
+    } finally {
+      setZipping(false);
+    }
   };
 
   return (
@@ -186,9 +221,10 @@ const ImageTransformer: React.FC = () => {
             <button
               type="button"
               onClick={downloadAll}
-              className="min-h-[36px] rounded-full px-4 text-xs font-semibold bg-slate-900 text-white active:bg-slate-800"
+              disabled={zipping}
+              className="min-h-[36px] rounded-full px-4 text-xs font-semibold bg-slate-900 text-white active:bg-slate-800 disabled:opacity-50"
             >
-              Scarica tutte
+              {zipping ? "Preparazione ZIP..." : "Scarica tutte (ZIP)"}
             </button>
           </div>
 
