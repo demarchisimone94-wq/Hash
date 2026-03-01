@@ -7,12 +7,6 @@ type ProcessedImage = {
   url: string;
 };
 
-const randomAngle = () => {
-  const min = -0.5;
-  const max = 0.5;
-  return (Math.random() * (max - min) + min) * (Math.PI / 180);
-};
-
 const processFile = (file: File): Promise<Blob> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -26,45 +20,16 @@ const processFile = (file: File): Promise<Blob> => {
         canvas.width = w;
         canvas.height = h;
         const ctx = canvas.getContext("2d");
+        
         if (!ctx) {
           reject(new Error("Canvas non supportato"));
           return;
         }
 
-        const angle = randomAngle();
-        ctx.save();
-        ctx.translate(w / 2, h / 2);
-        ctx.rotate(angle);
-        ctx.drawImage(img, -w / 2, -h / 2, w, h);
-        ctx.restore();
+        // Semplice disegno dell'immagine originale sul canvas
+        ctx.drawImage(img, 0, 0, w, h);
 
-        // micro-crop 1% dai bordi
-        const cropX = w * 0.01;
-        const cropY = h * 0.01;
-        const cropW = w * 0.98;
-        const cropH = h * 0.98;
-
-        const cropCanvas = document.createElement("canvas");
-        cropCanvas.width = cropW;
-        cropCanvas.height = cropH;
-        const cropCtx = cropCanvas.getContext("2d");
-        if (!cropCtx) {
-          reject(new Error("Canvas non supportato"));
-          return;
-        }
-        cropCtx.drawImage(
-          canvas,
-          cropX,
-          cropY,
-          cropW,
-          cropH,
-          0,
-          0,
-          cropW,
-          cropH
-        );
-
-        cropCanvas.toBlob(
+        canvas.toBlob(
           (blob) => {
             if (!blob) {
               reject(new Error("Impossibile generare JPEG"));
@@ -73,7 +38,7 @@ const processFile = (file: File): Promise<Blob> => {
             }
           },
           "image/jpeg",
-          0.92
+          0.92 // Qualità JPEG
         );
       };
       img.onerror = () => reject(new Error("Immagine non valida"));
@@ -102,7 +67,7 @@ const ImageTransformer: React.FC = () => {
         const url = URL.createObjectURL(blob);
         results.push({
           id: crypto.randomUUID(),
-          name: file.name.replace(/\.[^.]+$/, "") + "-vh.jpg",
+          name: file.name.replace(/\.[^.]+$/, "") + "-processed.jpg",
           url
         });
       }
@@ -141,7 +106,7 @@ const ImageTransformer: React.FC = () => {
     try {
       setZipping(true);
       const zip = new JSZip();
-      const folder = zip.folder("vintedhash-images");
+      const folder = zip.folder("immagini-elaborate");
 
       if (!folder) {
         throw new Error("Impossibile creare archivio ZIP");
@@ -160,16 +125,13 @@ const ImageTransformer: React.FC = () => {
       const url = URL.createObjectURL(zipBlob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "vintedhash-immagini.zip";
+      a.download = "immagini.zip";
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (e) {
-      setError(
-        (e as Error).message ||
-          "Errore nella creazione dello ZIP. Riprova tra poco."
-      );
+      setError((e as Error).message || "Errore nella creazione dello ZIP.");
     } finally {
       setZipping(false);
     }
@@ -182,10 +144,8 @@ const ImageTransformer: React.FC = () => {
         onDrop={onDrop}
         onDragOver={onDragOver}
       >
-        <p className="text-sm text-slate-600">
-          Trascina qui le foto oppure
-        </p>
-        <label className="inline-flex items-center justify-center min-h-[44px] rounded-2xl bg-brand px-4 py-2 text-sm font-semibold text-white shadow-sm active:bg-brand-dark cursor-pointer">
+        <p className="text-sm text-slate-600">Trascina qui le foto oppure</p>
+        <label className="inline-flex items-center justify-center min-h-[44px] rounded-2xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm cursor-pointer">
           Carica foto
           <input
             type="file"
@@ -195,34 +155,25 @@ const ImageTransformer: React.FC = () => {
             onChange={onInputChange}
           />
         </label>
-        <p className="text-[11px] text-slate-400">
-          Tutto avviene sul tuo dispositivo. Niente upload su server esterni.
-        </p>
       </div>
 
       {processing && (
-        <p className="text-sm text-brand font-medium px-1">
-          Elaborazione in corso, attendi qualche secondo...
+        <p className="text-sm text-blue-600 font-medium px-1">
+          Elaborazione in corso...
         </p>
       )}
 
-      {error && (
-        <p className="text-sm text-red-500 px-1">
-          {error}
-        </p>
-      )}
+      {error && <p className="text-sm text-red-500 px-1">{error}</p>}
 
       {images.length > 0 && (
         <div className="space-y-3">
           <div className="flex justify-between items-center px-1">
-            <p className="text-sm font-medium text-slate-700">
-              Immagini elaborate
-            </p>
+            <p className="text-sm font-medium text-slate-700">Immagini pronte</p>
             <button
               type="button"
               onClick={downloadAll}
               disabled={zipping}
-              className="min-h-[36px] rounded-full px-4 text-xs font-semibold bg-slate-900 text-white active:bg-slate-800 disabled:opacity-50"
+              className="min-h-[36px] rounded-full px-4 text-xs font-semibold bg-slate-900 text-white disabled:opacity-50"
             >
               {zipping ? "Preparazione ZIP..." : "Scarica tutte (ZIP)"}
             </button>
@@ -230,23 +181,14 @@ const ImageTransformer: React.FC = () => {
 
           <div className="grid grid-cols-2 gap-3">
             {images.map((img) => (
-              <div
-                key={img.id}
-                className="bg-white rounded-3xl shadow-sm overflow-hidden flex flex-col"
-              >
-                <img
-                  src={img.url}
-                  alt={img.name}
-                  className="w-full aspect-square object-cover"
-                />
+              <div key={img.id} className="bg-white rounded-3xl shadow-sm overflow-hidden flex flex-col">
+                <img src={img.url} alt={img.name} className="w-full aspect-square object-cover" />
                 <div className="p-2 flex flex-col gap-1">
-                  <p className="text-[11px] text-slate-500 truncate">
-                    {img.name}
-                  </p>
+                  <p className="text-[11px] text-slate-500 truncate">{img.name}</p>
                   <button
                     type="button"
                     onClick={() => downloadImage(img)}
-                    className="min-h-[36px] rounded-2xl bg-brand/90 text-white text-xs font-semibold px-3 py-1 active:bg-brand-dark"
+                    className="min-h-[36px] rounded-2xl bg-blue-500 text-white text-xs font-semibold px-3 py-1"
                   >
                     Scarica
                   </button>
@@ -260,5 +202,5 @@ const ImageTransformer: React.FC = () => {
   );
 };
 
-export default ImageTransformer;
+export default ImageTransformer;export default ImageTransformer;
 
