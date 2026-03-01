@@ -5,6 +5,7 @@ type ProcessedImage = {
   name: string;
   url: string;
   originalName: string;
+  blob: Blob; // Salviamo il blob direttamente per evitare riconversioni
 };
 
 // Genera un numero casuale in un range specifico
@@ -19,11 +20,9 @@ const generateHumanFilename = () => {
   const date = new Date();
   
   if (type === "iOS") {
-    // Es: IMG_4829.JPG
     const num = Math.floor(randomRange(1000, 9999));
     return `IMG_${num}.JPG`;
   } else if (type === "Android") {
-    // Es: 20240301_142301.jpg
     const YYYY = date.getFullYear();
     const MM = String(date.getMonth() + 1).padStart(2, '0');
     const DD = String(date.getDate()).padStart(2, '0');
@@ -32,7 +31,6 @@ const generateHumanFilename = () => {
     const ss = String(Math.floor(randomRange(0, 59))).padStart(2, '0');
     return `${YYYY}${MM}${DD}_${HH}${mm}${ss}.jpg`;
   } else {
-    // Es: DSC01923.JPG
     const num = Math.floor(randomRange(100, 9999));
     return `DSC0${num}.JPG`;
   }
@@ -44,12 +42,27 @@ const processFile = (file: File): Promise<Blob> => {
     reader.onload = () => {
       const img = new Image();
       img.onload = () => {
-        const w = img.naturalWidth;
-        const h = img.naturalHeight;
+        // LIMITATORE DI RISOLUZIONE
+        // Se la foto è gigantesca (es. 4000px), Vinted potrebbe fallire il processing.
+        // La ridimensioniamo a una misura standard da smartphone (max 2500px).
+        let w = img.naturalWidth;
+        let h = img.naturalHeight;
+        const maxDim = 2500;
+        
+        if (w > maxDim || h > maxDim) {
+          const ratio = w / h;
+          if (w > h) {
+            w = maxDim;
+            h = maxDim / ratio;
+          } else {
+            h = maxDim;
+            w = maxDim * ratio;
+          }
+        }
 
-        // CROP CASUALE
-        const cropX = w * randomRange(0.01, 0.03);
-        const cropY = h * randomRange(0.01, 0.03);
+        // CROP DI SICUREZZA (Minimo, per non perdere contenuto)
+        const cropX = w * 0.01;
+        const cropY = h * 0.01;
         const cropW = w - (cropX * 2); 
         const cropH = h - (cropY * 2);
 
@@ -57,38 +70,50 @@ const processFile = (file: File): Promise<Blob> => {
         canvas.width = cropW;
         canvas.height = cropH;
         
-        const ctx = canvas.getContext("2d");
+        const ctx = canvas.getContext("2d", { alpha: false }); // Disabilita canale alpha per forzare JPEG puro
         if (!ctx) {
           reject(new Error("Canvas non supportato"));
           return;
         }
 
-        // MICRO-ROTAZIONE E STRETCH
-        const angle = randomRange(-1.5, 1.5) * (Math.PI / 180);
+        // 1. RIEMPI DI BIANCO (Fix per foto che "spariscono")
+        // Se c'è trasparenza, diventa bianca e non nera (che viene bannata)
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(0, 0, cropW, cropH);
+
+        // 2. MICRO-ROTAZIONE E STRETCH (Meno aggressivo di prima)
+        // Riduciamo i valori per evitare che il file sembri corrotto
+        const angle = randomRange(-0.8, 0.8) * (Math.PI / 180);
+        
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high'; // Massima qualità
+        
         ctx.save();
         ctx.translate(cropW / 2, cropH / 2);
         ctx.rotate(angle);
-        ctx.scale(randomRange(0.99, 1.01), randomRange(0.99, 1.01));
+        ctx.scale(randomRange(0.995, 1.005), randomRange(0.995, 1.005));
         ctx.drawImage(img, -w / 2, -h / 2, w, h);
         ctx.restore();
 
-        // COLOR GRADING E RUMORE
+        // 3. COLOR GRADING (Imperceptibile ma matematico)
         const imageData = ctx.getImageData(0, 0, cropW, cropH);
         const data = imageData.data;
-        const rShift = randomRange(0.98, 1.02);
-        const gShift = randomRange(0.98, 1.02);
-        const bShift = randomRange(0.98, 1.02);
+        const rShift = randomRange(0.99, 1.01);
+        const gShift = randomRange(0.99, 1.01);
+        const bShift = randomRange(0.99, 1.01);
         
         for (let i = 0; i < data.length; i += 4) {
-          const noise = (Math.random() - 0.5) * 8; 
+          // Rumore ridotto: valori troppo alti corrompono la qualità visiva
+          const noise = (Math.random() - 0.5) * 4; 
           data[i] = Math.min(255, Math.max(0, (data[i] * rShift) + noise));
           data[i + 1] = Math.min(255, Math.max(0, (data[i + 1] * gShift) + noise));
           data[i + 2] = Math.min(255, Math.max(0, (data[i + 2] * bShift) + noise));
         }
         ctx.putImageData(imageData, 0, 0);
 
-        // COMPRESSIONE VARIABILE
-        const variableQuality = randomRange(0.88, 0.95);
+        // 4. QUALITÀ STANDARD (Fondamentale per Vinted)
+        // Non scendere sotto 0.92. Se il file è troppo compresso, il server lo scarta.
+        const safeQuality = randomRange(0.93, 0.98);
 
         canvas.toBlob(
           (blob) => {
@@ -96,7 +121,7 @@ const processFile = (file: File): Promise<Blob> => {
             else resolve(blob);
           },
           "image/jpeg",
-          variableQuality
+          safeQuality
         );
       };
       img.onerror = () => reject(new Error("File immagine non valido"));
@@ -129,11 +154,12 @@ const ImageTransformer: React.FC = () => {
           name: humanName,
           originalName: file.name,
           url,
+          blob // Conserviamo il blob
         });
       }
       setImages((prev) => [...prev, ...results]);
     } catch (e) {
-      setError("Si è verificato un errore durante l'elaborazione.");
+      setError("Errore: alcune immagini non sono supportate.");
     } finally {
       setProcessing(false);
     }
@@ -153,7 +179,6 @@ const ImageTransformer: React.FC = () => {
     e.preventDefault();
   };
 
-  // Funzione per salvare singola immagine (tap veloce)
   const downloadImage = (img: ProcessedImage) => {
     const a = document.createElement("a");
     a.href = img.url;
@@ -163,36 +188,32 @@ const ImageTransformer: React.FC = () => {
     document.body.removeChild(a);
   };
 
-  // Funzione "Magica" per iOS: Condivisione Multipla
+  // Funzione CONDIVISIONE corretta con METADATI TEMPORALI
   const shareAllToGallery = async () => {
     if (images.length === 0) return;
     setSharing(true);
     setError(null);
 
     try {
-      // 1. Convertiamo le URL blob in oggetti File reali
-      const filesArray = await Promise.all(
-        images.map(async (img) => {
-          const response = await fetch(img.url);
-          const blob = await response.blob();
-          return new File([blob], img.name, { type: "image/jpeg" });
-        })
-      );
+      // Creiamo File Objects completi con data di modifica aggiornata
+      // Questo è cruciale: se manca la data, Vinted a volte rifiuta il file.
+      const filesArray = images.map((img) => {
+        return new File([img.blob], img.name, { 
+            type: "image/jpeg",
+            lastModified: new Date().getTime() // Data di "scatto" = ADESSO
+        });
+      });
 
-      // 2. Controlliamo se il browser supporta la condivisione di file
       if (navigator.canShare && navigator.canShare({ files: filesArray })) {
         await navigator.share({
           files: filesArray,
-          title: 'Foto Vinted',
-          text: 'Ecco le tue foto pronte per Vinted!'
         });
       } else {
-        throw new Error("Il tuo browser non supporta il salvataggio multiplo. Scarica le foto una ad una cliccandoci sopra.");
+        throw new Error("Browser non compatibile. Scarica singolarmente.");
       }
     } catch (e) {
-      // Se l'utente annulla o c'è un errore
       if ((e as Error).name !== 'AbortError') {
-        setError((e as Error).message || "Errore nel salvataggio. Prova a scaricarle singolarmente.");
+        setError("Impossibile salvare automaticamente. Usa il tasto scarica su ogni foto.");
       }
     } finally {
       setSharing(false);
@@ -208,22 +229,22 @@ const ImageTransformer: React.FC = () => {
   return (
     <div className="space-y-6">
       <div
-        className="group bg-white rounded-3xl shadow-[0_4px_20px_-4px_rgba(0,0,0,0.1)] p-8 border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-center gap-4 transition-all hover:border-blue-500/50 hover:bg-slate-50/50 cursor-pointer"
+        className="group bg-white rounded-3xl shadow-[0_4px_20px_-4px_rgba(0,0,0,0.1)] p-8 border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-center gap-4 transition-all hover:border-indigo-500/50 hover:bg-slate-50/50 cursor-pointer"
         onDrop={onDrop}
         onDragOver={onDragOver}
         onClick={() => document.getElementById('file-input')?.click()}
       >
-        <div className="w-14 h-14 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+        <div className="w-14 h-14 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-7 h-7">
             <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
           </svg>
         </div>
         <div>
           <p className="text-base font-semibold text-slate-700">
-            Carica foto
+            Carica foto da pulire
           </p>
           <p className="text-xs text-slate-400 mt-1">
-            Tocca qui per selezionare dalla libreria
+            Tocca qui per aprire la galleria
           </p>
         </div>
         
@@ -239,9 +260,9 @@ const ImageTransformer: React.FC = () => {
 
       {processing && (
         <div className="flex flex-col items-center justify-center py-6 space-y-3">
-           <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+           <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
            <p className="text-xs font-medium text-slate-600 animate-pulse">
-            Elaborazione anti-hash in corso...
+            Rigenerazione file in corso...
           </p>
         </div>
       )}
@@ -264,7 +285,7 @@ const ImageTransformer: React.FC = () => {
                   onClick={clearImages}
                   className="text-xs text-slate-400 font-medium px-2 py-1"
                 >
-                  Svuota
+                  Ricomincia
                 </button>
              </div>
              
@@ -272,10 +293,10 @@ const ImageTransformer: React.FC = () => {
                 type="button"
                 onClick={shareAllToGallery}
                 disabled={sharing}
-                className="w-full py-3 px-4 rounded-xl text-sm font-bold bg-blue-600 text-white shadow-lg shadow-blue-600/20 active:scale-95 transition-all hover:bg-blue-500 disabled:opacity-70 flex items-center justify-center gap-2"
+                className="w-full py-3 px-4 rounded-xl text-sm font-bold bg-slate-900 text-white shadow-lg shadow-slate-900/20 active:scale-95 transition-all hover:bg-slate-800 disabled:opacity-70 flex items-center justify-center gap-2"
               >
                 {sharing ? (
-                  "Preparazione..."
+                  "Apro la condivisione..."
                 ) : (
                   <>
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
@@ -287,7 +308,7 @@ const ImageTransformer: React.FC = () => {
                 )}
               </button>
               <p className="text-[10px] text-center text-slate-400">
-                Si aprirà il menu condivisione. Scorri e scegli <strong>"Salva X Immagini"</strong>.
+                Seleziona <strong>"Salva X Immagini"</strong> dal menu che appare.
               </p>
           </div>
 
