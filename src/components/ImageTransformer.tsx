@@ -202,5 +202,4 @@ const ImageTransformer: React.FC = () => {
   );
 };
 
-export default ImageTransformer;export default ImageTransformer;
-
+export default ImageTransformer;
