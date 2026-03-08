@@ -5,10 +5,10 @@ type ProcessedImage = {
   name: string;
   url: string;
   originalName: string;
-  file: File; // Salviamo l'oggetto File completo
+  file: File;
 };
 
-// Generatore di nomi file "Umani" in minuscolo
+// Generatore di nomi file "Umani" (es. img_5421.jpg, dsc_412.jpg)
 const generateHumanFilename = () => {
   const types = ["ios", "android", "dslr"];
   const type = types[Math.floor(Math.random() * types.length)];
@@ -38,8 +38,9 @@ const processFile = (file: File): Promise<File> => {
       img.onload = () => {
         let w = img.naturalWidth;
         let h = img.naturalHeight;
-        const maxDim = 2200; // Risoluzione ottimale per Vinted (evita timeout)
         
+        // 1. Limite risoluzione per evitare timeout su Vinted
+        const maxDim = 2500; 
         if (w > maxDim || h > maxDim) {
           const ratio = w / h;
           if (w > h) {
@@ -52,44 +53,34 @@ const processFile = (file: File): Promise<File> => {
         }
 
         const canvas = document.createElement("canvas");
-        // Leggero crop dell'1% per cambiare l'hash dell'immagine
-        const cropW = w * 0.98;
-        const cropH = h * 0.98;
-        canvas.width = cropW;
-        canvas.height = cropH;
-        
         const ctx = canvas.getContext("2d", { alpha: false });
-        if (!ctx) {
-          reject(new Error("Canvas error"));
-          return;
-        }
+        if (!ctx) return reject(new Error("Canvas error"));
 
-        // Sfondo bianco per evitare trasparenze corrotte
+        canvas.width = w;
+        canvas.height = h;
+
+        // 2. Sfondo bianco (rimuove trasparenze sospette)
         ctx.fillStyle = "#FFFFFF";
-        ctx.fillRect(0, 0, cropW, cropH);
+        ctx.fillRect(0, 0, w, h);
 
-        // Micro-trasformazioni per l'algoritmo di Vinted
-        const angle = (Math.random() - 0.5) * 0.01; // Rotazione quasi invisibile
+        // 3. Logica "Screenshot & Distort" (Cambia l'Hash)
         ctx.save();
-        ctx.translate(cropW / 2, cropH / 2);
+        ctx.translate(w / 2, h / 2);
+
+        // Applichiamo una distorsione (skew) e una rotazione casuale impercettibile
+        const skewX = (Math.random() - 0.5) * 0.01;
+        const skewY = (Math.random() - 0.5) * 0.01;
+        const scale = 0.98; // Leggero zoom per non mostrare bordi dopo la distorsione
+        const angle = (Math.random() - 0.5) * 0.01;
+
+        ctx.transform(scale, skewX, skewY, scale, 0, 0);
         ctx.rotate(angle);
-        // Disegna l'immagine centrata
+
+        // Disegniamo l'immagine ricalcolando ogni pixel
         ctx.drawImage(img, -w / 2, -h / 2, w, h);
         ctx.restore();
 
-        // Modifica impercettibile dei pixel (Noise)
-        const imageData = ctx.getImageData(0, 0, cropW, cropH);
-        const data = imageData.data;
-        for (let i = 0; i < data.length; i += 4) {
-          const noise = (Math.random() - 0.5) * 2;
-          data[i] += noise;     // R
-          data[i + 1] += noise; // G
-          data[i + 2] += noise; // B
-        }
-        ctx.putImageData(imageData, 0, 0);
-
-        // Generazione del file finale
-        const quality = 0.92; // Bilanciamento perfetto tra qualità e peso file
+        // 4. Esportazione ad alta qualità (0.95 è il top per il web)
         canvas.toBlob(
           (blob) => {
             if (blob) {
@@ -104,7 +95,7 @@ const processFile = (file: File): Promise<File> => {
             }
           },
           "image/jpeg",
-          quality
+          0.95
         );
       };
       img.src = reader.result as string;
@@ -138,7 +129,7 @@ const ImageTransformer: React.FC = () => {
       }
       setImages((prev) => [...prev, ...newImages]);
     } catch (e) {
-      setError("Errore durante l'elaborazione. Riprova.");
+      setError("Errore durante l'elaborazione.");
     } finally {
       setProcessing(false);
     }
@@ -155,7 +146,7 @@ const ImageTransformer: React.FC = () => {
         if ((e as Error).name !== 'AbortError') setError("Usa il download singolo.");
       }
     } else {
-      setError("Il tuo browser non supporta il salvataggio multiplo. Scaricale singolarmente.");
+      setError("Browser non supportato per il salvataggio multiplo.");
     }
   };
 
@@ -165,7 +156,7 @@ const ImageTransformer: React.FC = () => {
   };
 
   return (
-    <div className="p-4 max-w-md mx-auto space-y-4">
+    <div className="p-4 max-w-md mx-auto space-y-4 font-sans">
       <div 
         onClick={() => document.getElementById('file-upload')?.click()}
         className="border-2 border-dashed border-slate-300 rounded-2xl p-8 text-center bg-slate-50 cursor-pointer hover:bg-slate-100 transition-colors"
@@ -178,27 +169,27 @@ const ImageTransformer: React.FC = () => {
           className="hidden" 
           onChange={(e) => handleFiles(e.target.files)}
         />
-        <p className="text-slate-600 font-medium">Carica o trascina le foto</p>
-        <p className="text-xs text-slate-400 mt-1">Verranno pulite e rinominate</p>
+        <p className="text-slate-600 font-bold">Carica Foto Anti-Ban</p>
+        <p className="text-xs text-slate-400 mt-1">L'hash verrà rigenerato automaticamente</p>
       </div>
 
-      {processing && <p className="text-center text-xs animate-pulse text-indigo-600">Elaborazione in corso...</p>}
+      {processing && <p className="text-center text-xs animate-pulse text-indigo-600">Creazione nuovi screenshot in corso...</p>}
       {error && <p className="text-center text-xs text-red-500">{error}</p>}
 
       {images.length > 0 && (
         <div className="space-y-4">
           <button 
             onClick={saveToGallery}
-            className="w-full bg-black text-white py-3 rounded-xl font-bold shadow-lg active:scale-95 transition-transform"
+            className="w-full bg-black text-white py-4 rounded-2xl font-bold shadow-lg active:scale-95 transition-transform"
           >
             Salva tutte in Galleria
           </button>
           
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-2 gap-3">
             {images.map((img) => (
-              <div key={img.id} className="relative group rounded-lg overflow-hidden border border-slate-200">
-                <img src={img.url} alt="done" className="aspect-square object-cover" />
-                <div className="absolute bottom-0 w-full bg-white/80 p-1 text-[8px] text-center truncate">
+              <div key={img.id} className="relative rounded-xl overflow-hidden shadow-sm border border-slate-200">
+                <img src={img.url} alt="processed" className="aspect-square object-cover" />
+                <div className="absolute bottom-0 w-full bg-black/60 text-white p-1 text-[9px] text-center truncate">
                   {img.name}
                 </div>
               </div>
