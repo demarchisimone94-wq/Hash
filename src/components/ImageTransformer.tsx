@@ -39,7 +39,7 @@ const processFile = (file: File): Promise<File> => {
         let w = img.naturalWidth;
         let h = img.naturalHeight;
         
-        // 1. Limite risoluzione per evitare timeout su Vinted
+        // 1. Limite risoluzione per evitare timeout
         const maxDim = 2500; 
         if (w > maxDim || h > maxDim) {
           const ratio = w / h;
@@ -59,28 +59,34 @@ const processFile = (file: File): Promise<File> => {
         canvas.width = w;
         canvas.height = h;
 
-        // 2. Sfondo bianco (rimuove trasparenze sospette)
+        // Migliora la qualità del ridimensionamento
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+
+        // 2. Sfondo (non sarà visibile grazie allo zoom)
         ctx.fillStyle = "#FFFFFF";
         ctx.fillRect(0, 0, w, h);
 
-        // 3. Logica "Screenshot & Distort" (Cambia l'Hash)
+        // 3. Logica Anti-Ban (Hash Regeneration)
         ctx.save();
         ctx.translate(w / 2, h / 2);
 
-        // Applichiamo una distorsione (skew) e una rotazione casuale impercettibile
-        const skewX = (Math.random() - 0.5) * 0.01;
-        const skewY = (Math.random() - 0.5) * 0.01;
-        const scale = 0.98; // Leggero zoom per non mostrare bordi dopo la distorsione
-        const angle = (Math.random() - 0.5) * 0.01;
+        // Applichiamo distorsione e rotazione
+        const skewX = (Math.random() - 0.5) * 0.012;
+        const skewY = (Math.random() - 0.5) * 0.012;
+        const angle = (Math.random() - 0.5) * 0.015;
+        
+        // FIX: Usiamo uno scale > 1 (Zoom In) per eliminare i bordi bianchi
+        const scale = 1.05; 
 
         ctx.transform(scale, skewX, skewY, scale, 0, 0);
         ctx.rotate(angle);
 
-        // Disegniamo l'immagine ricalcolando ogni pixel
+        // Disegniamo l'immagine centrata
         ctx.drawImage(img, -w / 2, -h / 2, w, h);
         ctx.restore();
 
-        // 4. Esportazione ad alta qualità (0.95 è il top per il web)
+        // 4. Esportazione (rimuove EXIF e rigenera i pixel)
         canvas.toBlob(
           (blob) => {
             if (blob) {
@@ -95,7 +101,7 @@ const processFile = (file: File): Promise<File> => {
             }
           },
           "image/jpeg",
-          0.95
+          0.92 // Qualità bilanciata per caricamenti veloci
         );
       };
       img.src = reader.result as string;
@@ -170,10 +176,10 @@ const ImageTransformer: React.FC = () => {
           onChange={(e) => handleFiles(e.target.files)}
         />
         <p className="text-slate-600 font-bold">Carica Foto Anti-Ban</p>
-        <p className="text-xs text-slate-400 mt-1">L'hash verrà rigenerato automaticamente</p>
+        <p className="text-xs text-slate-400 mt-1">L'hash verrà rigenerato con zoom correttivo</p>
       </div>
 
-      {processing && <p className="text-center text-xs animate-pulse text-indigo-600">Creazione nuovi screenshot in corso...</p>}
+      {processing && <p className="text-center text-xs animate-pulse text-indigo-600">Elaborazione pixel in corso...</p>}
       {error && <p className="text-center text-xs text-red-500">{error}</p>}
 
       {images.length > 0 && (
@@ -188,7 +194,7 @@ const ImageTransformer: React.FC = () => {
           <div className="grid grid-cols-2 gap-3">
             {images.map((img) => (
               <div key={img.id} className="relative rounded-xl overflow-hidden shadow-sm border border-slate-200">
-                <img src={img.url} alt="processed" className="aspect-square object-cover" />
+                <img src={img.url} alt="processed" className="aspect-square object-cover w-full h-full" />
                 <div className="absolute bottom-0 w-full bg-black/60 text-white p-1 text-[9px] text-center truncate">
                   {img.name}
                 </div>
